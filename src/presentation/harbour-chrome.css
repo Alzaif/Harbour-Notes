@@ -1,0 +1,76 @@
+/* Shared Harbour chrome — keep in sync with harbour-platform-ui and harbour-docs copies */
+
+:root {
+  --harbour-chrome-height: 48px;
+  --harbour-chrome-bg: #0a0e12;
+  --harbour-chrome-border: #1e2a38;
+  --harbour-chrome-text: #c8d4e0;
+  --harbour-chrome-muted: #6b7d8f;
+  --harbour-chrome-accent: #5cabca;
+  --harbour-chrome-font: ui-monospace, 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+}
+
+.harbour-chrome {
+  flex-shrink: 0;
+  height: var(--harbour-chrome-height);
+  background: var(--harbour-chrome-bg);
+  border-bottom: 1px solid var(--harbour-chrome-border);
+  font-family: var(--harbour-chrome-font);
+  font-size: 13px;
+}
+
+.harbour-chrome__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 100%;
+  padding: 0 16px;
+  max-width: 100%;
+}
+
+.harbour-chrome__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--harbour-chrome-accent);
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.harbour-chrome__brand:hover {
+  color: #7ec8e3;
+}
+
+.harbour-chrome__brand-mark {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--harbour-chrome-accent);
+  box-shadow: 0 0 8px var(--harbour-chrome-accent);
+}
+
+.harbour-chrome__divider {
+  width: 1px;
+  height: 18px;
+  background: var(--harbour-chrome-border);
+}
+
+.harbour-chrome__app {
+  color: var(--harbour-chrome-text);
+  font-weight: 500;
+}
+
+.harbour-chrome__spacer {
+  flex: 1;
+}
+
+.harbour-chrome__home-link {
+  color: var(--harbour-chrome-muted);
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.harbour-chrome__home-link:hover {
+  color: var(--harbour-chrome-accent);
+}
