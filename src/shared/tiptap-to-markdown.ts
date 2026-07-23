@@ -1,18 +1,23 @@
 /** Convert TipTap/ProseMirror JSON document to Markdown (MVP subset). */
 export function tiptapJsonToMarkdown(contentJson: string, title: string): string {
+  const body = tiptapJsonToMarkdownBody(contentJson);
+  return `# ${title}\n\n${body}`.trimEnd() + '\n';
+}
+
+export function tiptapJsonToMarkdownBody(contentJson: string): string {
   let doc: { content?: unknown[] };
   try {
     doc = JSON.parse(contentJson) as { content?: unknown[] };
   } catch {
-    return `# ${title}\n\n`;
+    return '';
   }
-  const lines: string[] = [`# ${title}`, ''];
+  const lines: string[] = [];
   if (doc.content) {
     for (const node of doc.content) {
       lines.push(...nodeToMarkdown(node, 0));
     }
   }
-  return lines.join('\n').trimEnd() + '\n';
+  return lines.join('\n').trimEnd();
 }
 
 function nodeToMarkdown(node: unknown, listDepth: number): string[] {

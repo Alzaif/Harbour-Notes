@@ -1,86 +1,67 @@
-import type { FolderTreeNode, Page, PageSummary } from './types.js';
+import type {
+  PageRef,
+  PageSaveResult,
+  PublishStatus,
+  PublishedPage,
+  SourcePage,
+  Space,
+} from './types.js';
+import { apiUrl } from './app-path.js';
 
-async function request<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T> {
-  const res = await fetch(path, {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(apiUrl(path), {
     ...init,
-    credentials: 'same-origin',
     headers: {
-      ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...init?.headers,
+      'Content-Type': 'application/json',
+      ...(init?.headers ?? {}),
     },
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
-    const err = new Error(body.error ?? res.statusText) as Error & { status: number };
-    err.status = res.status;
-    throw err;
+    throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
 export const api = {
-  listFolders: () => request<FolderTreeNode[]>('/api/folders'),
-
-  createFolder: (body: { name: string; parentId?: string | null }) =>
-    request<FolderTreeNode>('/api/folders', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  updateFolder: (
-    id: string,
-    body: { name?: string; parentId?: string | null; position?: number },
+  listSpaces: () => request<Space[]>('/api/spaces'),
+  createSpace: (body: {
+    slug: string;
+    title: string;
+    departmentSlug?: string | null;
+    s3Prefix?: string;
+  }) => request<Space>('/api/spaces', { method: 'POST', body: JSON.stringify(body) }),
+  getSpaceTree: (spaceId: string) => request<PageRef[]>(`/api/spaces/${spaceId}/tree`),
+  getPublishedPage: (spaceId: string, pageId: string) =>
+    request<PublishedPage>(`/api/spaces/${spaceId}/pages/${pageId}/published`),
+  getSourcePage: (spaceId: string, pageId: string) =>
+    request<SourcePage>(`/api/spaces/${spaceId}/pages/${pageId}/source`),
+  commitPage: (
+    spaceId: string,
+    pageId: string,
+    body: { baseSha: string; title: string; contentMarkdown: string },
   ) =>
-    request<FolderTreeNode>(`/api/folders/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-
-  deleteFolder: (id: string) =>
-    request<void>(`/api/folders/${id}`, { method: 'DELETE' }),
-
-  listPages: (folderId: string, q?: string) => {
-    const params = q ? `?q=${encodeURIComponent(q)}` : '';
-    return request<PageSummary[]>(`/api/folders/${folderId}/pages${params}`);
-  },
-
-  reorderPages: (folderId: string, pageIds: string[]) =>
-    request<PageSummary[]>(`/api/folders/${folderId}/pages/order`, {
-      method: 'PATCH',
-      body: JSON.stringify({ pageIds }),
-    }),
-
-  createPage: (body: { folderId: string; title?: string }) =>
-    request<Page>('/api/pages', { method: 'POST', body: JSON.stringify(body) }),
-
-  getPage: (id: string) => request<Page>(`/api/pages/${id}`),
-
-  updatePage: (
-    id: string,
-    body: { version: number; title?: string; contentJson?: string },
-  ) =>
-    request<Page>(`/api/pages/${id}`, {
+    request<PageSaveResult>(`/api/spaces/${spaceId}/pages/${pageId}/source`, {
       method: 'PUT',
       body: JSON.stringify(body),
     }),
-
-  deletePage: (id: string) =>
-    request<void>(`/api/pages/${id}`, { method: 'DELETE' }),
-
-  uploadAttachment: (pageId: string, file: File) => {
-    const form = new FormData();
-    form.append('file', file);
-    return request<{ id: string; url: string }>(`/api/pages/${pageId}/attachments`, {
+  createPage: (
+    spaceId: string,
+    body: {
+      pageId: string;
+      title: string;
+      parentPageId?: string | null;
+      contentMarkdown?: string;
+      baseSha: string;
+    },
+  ) =>
+    request<PageSaveResult>(`/api/spaces/${spaceId}/pages`, {
       method: 'POST',
-      body: form,
-    });
-  },
-
-  exportMarkdown: (pageId: string) => {
-    window.location.assign(`/api/pages/${pageId}/export/markdown`);
-  },
+      body: JSON.stringify(body),
+    }),
+  getPublishStatus: (spaceId: string) =>
+    request<PublishStatus>(`/api/spaces/${spaceId}/publish/status`),
+  getPullRequestUrl: (spaceId: string) =>
+    request<{ prUrl: string | null }>(`/api/spaces/${spaceId}/git/pr`),
 };

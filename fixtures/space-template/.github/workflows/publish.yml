@@ -1,0 +1,13 @@
+name: Publish Harbour Notes Space
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish to S3
+        run: echo "Run harbour-notes publish script or custom renderer in CI"

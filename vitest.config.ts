@@ -1,15 +1,13 @@
-import { defineConfig } from 'vitest/config';
-import { fileURLToPath, URL } from 'node:url';
+import { defineConfig, mergeConfig } from 'vitest/config';
+import viteConfig from './vite.config';
 
-export default defineConfig({
-  resolve: {
-    alias: {
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
+export default mergeConfig(
+  viteConfig,
+  defineConfig({
+    test: {
+      include: ['tests/**/*.test.ts'],
+      environment: 'node',
+      passWithNoTests: false,
     },
-  },
-  test: {
-    include: ['tests/**/*.test.ts'],
-    environment: 'node',
-    passWithNoTests: false,
-  },
-});
+  }),
+);

@@ -3,7 +3,7 @@ import type { Editor } from '@tiptap/react';
 
 interface EditorToolbarProps {
   readonly editor: Editor;
-  readonly onInsertImage: () => void;
+  readonly onInsertImage?: () => void;
 }
 
 function ToolbarButton({
@@ -87,9 +87,11 @@ export function EditorToolbar({ editor, onInsertImage }: EditorToolbarProps) {
         “
       </ToolbarButton>
       <span className="wiki-toolbar__divider" />
-      <ToolbarButton title="Insert image" onClick={onInsertImage}>
-        Image
-      </ToolbarButton>
+      {onInsertImage && (
+        <ToolbarButton title="Insert image" onClick={onInsertImage}>
+          Image
+        </ToolbarButton>
+      )}
     </div>
   );
 }

@@ -1,0 +1,13 @@
+schema: harbour.space-manifest.v1
+spaceId: engineering
+tree:
+  - pageId: onboarding
+    title: Onboarding
+    path: pages/onboarding.md
+    children:
+      - pageId: dev-setup
+        title: Dev setup
+        path: pages/onboarding/setup.md
+publish:
+  contentFormat: markdown
+  assetsGlob: assets/**

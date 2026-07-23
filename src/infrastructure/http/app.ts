@@ -21,135 +21,109 @@ export function createApp(deps: NotesDependencies) {
   const api = new Hono<{ Variables: AppVariables }>();
   api.use('*', createGatewayIdentityMiddleware(deps.config, deps.users));
 
-  api.get('/folders', async (c) => {
-    const tree = await deps.notes.listFolderTree(c.get('user'));
+  api.get('/spaces', async (c) => {
+    const list = await deps.spaces.listSpaces(c.get('user'));
+    return c.json(list);
+  });
+
+  api.post('/spaces', async (c) => {
+    const body = await c.req.json<{
+      slug: string;
+      title: string;
+      departmentSlug?: string | null;
+      s3Prefix?: string;
+    }>();
+    if (!body.slug?.trim() || !body.title?.trim()) {
+      throw new ValidationError('slug and title are required');
+    }
+    const space = await deps.spaces.createSpace(c.get('user'), {
+      slug: body.slug.trim(),
+      title: body.title.trim(),
+      departmentSlug: body.departmentSlug ?? null,
+      s3Prefix: body.s3Prefix,
+    });
+    return c.json(space, 201);
+  });
+
+  api.get('/spaces/:spaceId/tree', async (c) => {
+    const tree = await deps.spaces.getSpaceTree(c.get('user'), c.req.param('spaceId'));
     return c.json(tree);
   });
 
-  api.post('/folders', async (c) => {
-    const body = await c.req.json<{ name: string; parentId?: string | null }>();
-    const folder = await deps.notes.createFolder(c.get('user'), body);
-    return c.json(folder, 201);
+  api.get('/spaces/:spaceId/pages/:pageId/published', async (c) => {
+    const page = await deps.pages.getPublishedPage(
+      c.get('user'),
+      c.req.param('spaceId'),
+      c.req.param('pageId'),
+    );
+    return c.json(page);
   });
 
-  api.patch('/folders/:id', async (c) => {
+  api.get('/spaces/:spaceId/pages/:pageId/source', async (c) => {
+    const page = await deps.pages.getSourcePage(
+      c.get('user'),
+      c.req.param('spaceId'),
+      c.req.param('pageId'),
+    );
+    return c.json(page);
+  });
+
+  api.put('/spaces/:spaceId/pages/:pageId/source', async (c) => {
     const body = await c.req.json<{
-      name?: string;
-      parentId?: string | null;
-      position?: number;
+      baseSha: string;
+      title: string;
+      contentMarkdown: string;
     }>();
-    const folder = await deps.notes.updateFolder(c.get('user'), c.req.param('id'), body);
-    return c.json(folder);
-  });
-
-  api.delete('/folders/:id', async (c) => {
-    await deps.notes.deleteFolder(c.get('user'), c.req.param('id'));
-    return c.body(null, 204);
-  });
-
-  api.patch('/folders/:id/pages/order', async (c) => {
-    const body = await c.req.json<{ pageIds: string[] }>();
-    if (!Array.isArray(body.pageIds)) {
-      throw new ValidationError('pageIds must be an array');
+    if (!body.baseSha || body.title === undefined || body.contentMarkdown === undefined) {
+      throw new ValidationError('baseSha, title, and contentMarkdown are required');
     }
-    const pages = await deps.notes.reorderPages(
+    const page = await deps.pages.commitPage(
       c.get('user'),
-      c.req.param('id'),
-      body.pageIds,
+      c.req.param('spaceId'),
+      c.req.param('pageId'),
+      body,
     );
-    return c.json(pages);
+    return c.json(page);
   });
 
-  api.get('/folders/:id/pages', async (c) => {
-    const q = c.req.query('q');
-    const pages = q
-      ? await deps.notes.searchPages(c.get('user'), c.req.param('id'), q)
-      : await deps.notes.listPages(c.get('user'), c.req.param('id'));
-    return c.json(pages);
-  });
-
-  api.get('/folders/:folderId/pages/search', async (c) => {
-    const q = c.req.query('q') ?? '';
-    const pages = await deps.notes.searchPages(
-      c.get('user'),
-      c.req.param('folderId'),
-      q,
-    );
-    return c.json(pages);
-  });
-
-  api.post('/pages', async (c) => {
-    const body = await c.req.json<{ folderId: string; title?: string }>();
-    const page = await deps.notes.createPage(c.get('user'), body);
+  api.post('/spaces/:spaceId/pages', async (c) => {
+    const body = await c.req.json<{
+      pageId: string;
+      title: string;
+      parentPageId?: string | null;
+      contentMarkdown?: string;
+      baseSha: string;
+    }>();
+    if (!body.pageId?.trim() || !body.title?.trim() || !body.baseSha) {
+      throw new ValidationError('pageId, title, and baseSha are required');
+    }
+    const page = await deps.pages.createPage(c.get('user'), c.req.param('spaceId'), {
+      pageId: body.pageId.trim(),
+      title: body.title.trim(),
+      parentPageId: body.parentPageId ?? null,
+      contentMarkdown: body.contentMarkdown,
+      baseSha: body.baseSha,
+    });
     return c.json(page, 201);
   });
 
-  api.get('/pages/:id', async (c) => {
-    const page = await deps.notes.getPage(c.get('user'), c.req.param('id'));
-    return c.json(page);
+  api.get('/spaces/:spaceId/publish/status', async (c) => {
+    const status = await deps.publish.getPublishStatus(c.get('user'), c.req.param('spaceId'));
+    return c.json(status);
   });
 
-  api.put('/pages/:id', async (c) => {
-    const body = await c.req.json<{
-      version: number;
-      title?: string;
-      contentJson?: string;
-    }>();
-    if (body.version === undefined) {
-      throw new ValidationError('version is required');
-    }
-    const page = await deps.notes.updatePage(
-      c.get('user'),
-      c.req.param('id'),
-      body.version,
-      { title: body.title, contentJson: body.contentJson },
-    );
-    return c.json(page);
+  api.get('/spaces/:spaceId/git/pr', async (c) => {
+    const result = await deps.publish.getPullRequestUrl(c.get('user'), c.req.param('spaceId'));
+    return c.json(result);
   });
 
-  api.delete('/pages/:id', async (c) => {
-    await deps.notes.deletePage(c.get('user'), c.req.param('id'));
+  api.post('/spaces/:spaceId/publish/callback', async (c) => {
+    const secret = c.req.header('X-Notes-Publish-Secret');
+    const body = await c.req.json();
+    await deps.publish.recordPublishCallback(body, secret);
     return c.body(null, 204);
   });
 
-  api.post('/pages/:id/attachments', async (c) => {
-    const form = await c.req.parseBody();
-    const file = form['file'];
-    if (!file || typeof file === 'string') {
-      throw new ValidationError('file is required');
-    }
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const result = await deps.notes.uploadAttachment(c.get('user'), c.req.param('id'), {
-      mimeType: file.type || 'application/octet-stream',
-      originalFilename: file.name || 'upload',
-      data: buffer,
-    });
-    return c.json({ id: result.attachment.id, url: result.url }, 201);
-  });
-
-  api.get('/attachments/:id/content', async (c) => {
-    const { data, mimeType } = await deps.notes.getAttachmentContent(
-      c.get('user'),
-      c.req.param('id'),
-    );
-    return new Response(new Uint8Array(data), {
-      headers: { 'Content-Type': mimeType },
-    });
-  });
-
-  api.get('/pages/:id/export/markdown', async (c) => {
-    const page = await deps.notes.getPage(c.get('user'), c.req.param('id'));
-    const md = deps.notes.exportPageMarkdown(page);
-    const filename = `${page.title.replace(/[^\w.-]+/g, '_') || 'page'}.md`;
-    return new Response(md, {
-      headers: {
-        'Content-Type': 'text/markdown; charset=utf-8',
-        'Content-Disposition': `attachment; filename="${filename}"`,
-      },
-    });
-  });
-
   app.route('/api', api);
-
   return app;
 }

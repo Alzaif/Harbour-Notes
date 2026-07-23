@@ -1,376 +1,368 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { BrowserRouter, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { api } from './api/client.js';
-import type { FolderTreeNode, Page, PageSummary } from './api/types.js';
+import type { PageRef, PublishStatus, PublishedPage, SourcePage, Space } from './api/types.js';
+import { HarbourAppBar } from './components/HarbourAppBar.js';
+import { SpaceSidebar } from './components/SpaceSidebar.js';
+import { PageToolbar } from './components/PageToolbar.js';
+import { CommentsPanel } from './components/CommentsPanel.js';
 import { Breadcrumbs } from './components/Breadcrumbs.js';
 import { RichTextEditor } from './components/RichTextEditor.js';
-import { HarbourAppBar } from './components/HarbourAppBar.js';
-import { WikiSidebar } from './components/WikiSidebar.js';
-import { EMPTY_DOC_JSON } from '../shared/extract-plain-text.js';
-import { contentJsonEquals } from '../shared/normalize-content-json.js';
-import { findFolderPath, flattenFolders } from './utils/folder-tree.js';
+import { NotesHomePage } from './components/NotesHomePage.js';
+import { SpaceOverviewPage } from './components/SpaceOverviewPage.js';
+import { findPageInTree, getPageAncestors } from './utils/page-tree.js';
 
 const shellUrl = import.meta.env.VITE_HARBOUR_SHELL_URL ?? 'https://harbour.local';
 
-export function App() {
-  const [folders, setFolders] = useState<FolderTreeNode[]>([]);
-  const [selectedSpaceId, setSelectedSpaceId] = useState<string | null>(null);
-  const [pagesByFolder, setPagesByFolder] = useState<Record<string, PageSummary[]>>({});
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-  const [selectedPageId, setSelectedPageId] = useState<string | null>(null);
-  const [page, setPage] = useState<Page | null>(null);
-  const [searchQuery, setSearchQuery] = useState('');
+function NotesShell() {
+  const [spaces, setSpaces] = useState<Space[]>([]);
+  const [tree, setTree] = useState<PageRef[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [saveStatus, setSaveStatus] = useState('');
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSave = useRef<{ title?: string; contentJson?: string } | null>(null);
-  const savedBaseline = useRef<{
-    pageId: string;
-    title: string;
-    contentJson: string;
-  } | null>(null);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const navigate = useNavigate();
+  const { spaceId, pageId } = useParams<{ spaceId?: string; pageId?: string }>();
 
-  const loadFolders = useCallback(async () => {
-    const tree = await api.listFolders();
-    setFolders(tree);
-    const flat = flattenFolders(tree);
-    const entries = await Promise.all(
-      flat.map(async (f) => {
-        const pages = await api.listPages(f.id);
-        return [f.id, pages] as const;
-      }),
-    );
-    setPagesByFolder(Object.fromEntries(entries));
-    setSelectedSpaceId((prev) => prev ?? tree[0]?.id ?? null);
-    setSelectedFolderId((prev) => prev ?? tree[0]?.id ?? null);
-    return tree;
-  }, []);
-
-  const refreshFolderPages = useCallback(async (folderId: string) => {
-    const pages = await api.listPages(folderId);
-    setPagesByFolder((prev) => ({ ...prev, [folderId]: pages }));
-  }, []);
-
-  const loadPage = useCallback(async (id: string) => {
-    const p = await api.getPage(id);
-    setPage(p);
-    setSelectedFolderId(p.folderId);
-    const spaceId = findSpaceIdForFolder(folders, p.folderId);
-    if (spaceId) setSelectedSpaceId(spaceId);
-  }, [folders]);
-
-  useEffect(() => {
-    void loadFolders().catch((e: Error) => setError(e.message));
-  }, [loadFolders]);
-
-  useEffect(() => {
-    if (!selectedPageId) {
-      setPage(null);
-      savedBaseline.current = null;
-      return;
-    }
-    loadPage(selectedPageId).catch((e: Error) => setError(e.message));
-  }, [selectedPageId, loadPage]);
-
-  useEffect(() => {
-    if (!page) return;
-    savedBaseline.current = {
-      pageId: page.id,
-      title: page.title,
-      contentJson: page.contentJson || EMPTY_DOC_JSON,
-    };
-    pendingSave.current = null;
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-  }, [page?.id, page?.version]);
-
-  const flushSave = useCallback(async () => {
-    if (!page || !pendingSave.current) return;
-    const base = savedBaseline.current;
-    const patch = pendingSave.current;
-    const nextTitle = patch.title ?? page.title;
-    const nextContent = patch.contentJson ?? page.contentJson ?? EMPTY_DOC_JSON;
-
-    const hasChange =
-      !base ||
-      base.pageId !== page.id ||
-      (patch.title !== undefined && nextTitle !== base.title) ||
-      (patch.contentJson !== undefined &&
-        !contentJsonEquals(nextContent, base.contentJson));
-
-    if (!hasChange) {
-      pendingSave.current = null;
-      return;
-    }
-
-    pendingSave.current = null;
-    setSaveStatus('Saving…');
-    try {
-      const updated = await api.updatePage(page.id, {
-        version: page.version,
-        ...(patch.title !== undefined ? { title: patch.title } : {}),
-        ...(patch.contentJson !== undefined ? { contentJson: patch.contentJson } : {}),
-      });
-      setPage(updated);
-      savedBaseline.current = {
-        pageId: updated.id,
-        title: updated.title,
-        contentJson: updated.contentJson || EMPTY_DOC_JSON,
-      };
-      setSaveStatus('Saved');
-    } catch (e) {
-      const err = e as Error & { status?: number };
-      if (err.status === 409) {
-        setError('Someone else updated this page. Reload to continue.');
-      } else {
-        setError(err.message);
-      }
-      setSaveStatus('');
-    }
-  }, [page, refreshFolderPages]);
-
-  const scheduleSave = useCallback(
-    (patch: { title?: string; contentJson?: string }) => {
-      pendingSave.current = { ...pendingSave.current, ...patch };
-      if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-        void flushSave();
-      }, 800);
-    },
-    [flushSave],
+  const selectedSpace = useMemo(
+    () => spaces.find((space) => space.id === spaceId) ?? null,
+    [spaces, spaceId],
   );
 
-  const handleCreateFolder = async (parentId: string | null) => {
-    const name = window.prompt('Folder name');
-    if (!name) return;
-    try {
-      await api.createFolder({ name, parentId });
-      await loadFolders();
-    } catch (e) {
-      setError((e as Error).message);
+  const loadSpaces = useCallback(async () => {
+    const list = await api.listSpaces();
+    setSpaces(list);
+    return list;
+  }, []);
+
+  const refreshTree = useCallback(async (id: string) => {
+    const next = await api.getSpaceTree(id);
+    setTree(next);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    void loadSpaces().catch((e: Error) => setError(e.message));
+  }, [loadSpaces]);
+
+  useEffect(() => {
+    if (!spaceId) {
+      setTree([]);
+      return;
     }
-  };
+    void refreshTree(spaceId).catch((e: Error) => setError(e.message));
+  }, [spaceId, refreshTree]);
 
   const handleCreateSpace = async () => {
-    const name = window.prompt('Space name');
-    if (!name) return;
+    const title = window.prompt('Space title');
+    if (!title?.trim()) return;
+    const slug = title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
     try {
-      const space = await api.createFolder({ name, parentId: null });
-      await loadFolders();
-      setSelectedSpaceId(space.id);
-      setSelectedFolderId(space.id);
-      setSelectedPageId(null);
+      const space = await api.createSpace({ slug, title: title.trim() });
+      await loadSpaces();
+      navigate(`/spaces/${space.id}`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : 'Failed to create space');
     }
   };
 
-  const handleCreatePage = async (folderId: string) => {
-    if (!folderId) return;
+  const handleCreatePage = async (parentPageId?: string | null) => {
+    if (!spaceId) return;
+    const title = window.prompt('Page title');
+    if (!title?.trim()) return;
+    const pageIdInput = window.prompt('Page id (slug)', title.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+    if (!pageIdInput?.trim()) return;
     try {
-      const created = await api.createPage({ folderId });
-      await refreshFolderPages(folderId);
-      setSelectedFolderId(folderId);
-      setSelectedPageId(created.id);
+      const status = await api.getPublishStatus(spaceId);
+      const created = await api.createPage(spaceId, {
+        pageId: pageIdInput.trim(),
+        title: title.trim(),
+        parentPageId: parentPageId ?? null,
+        contentMarkdown: '',
+        baseSha: status.headGitSha,
+      });
+      await refreshTree(spaceId);
+      navigate(`/spaces/${spaceId}/pages/${created.pageId}?mode=edit`);
     } catch (e) {
-      setError((e as Error).message);
+      setError(e instanceof Error ? e.message : 'Failed to create page');
     }
   };
-
-  const handleSelectPage = async (id: string, folderId: string) => {
-    if (id === selectedPageId) return;
-    if (saveTimer.current) {
-      clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-    if (page && pendingSave.current) {
-      await flushSave();
-    }
-    setSelectedFolderId(folderId);
-    setSelectedPageId(id);
-  };
-
-  const handleReorderPages = async (folderId: string, pageIds: string[]) => {
-    try {
-      const ordered = await api.reorderPages(folderId, pageIds);
-      setPagesByFolder((prev) => ({ ...prev, [folderId]: ordered }));
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleDeletePage = async () => {
-    if (!page || !window.confirm(`Delete "${page.title}"?`)) return;
-    try {
-      await api.deletePage(page.id);
-      setSelectedPageId(null);
-      setPage(null);
-      await refreshFolderPages(page.folderId);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleImageUpload = async (file: File) => {
-    if (!page) throw new Error('No page selected');
-    const { url } = await api.uploadAttachment(page.id, file);
-    return url;
-  };
-
-  const breadcrumbSegments = useMemo(() => {
-    if (!page) return [];
-    const folderPath = findFolderPath(folders, page.folderId) ?? [];
-    return [
-      { label: 'Notes', onClick: () => setSelectedPageId(null) },
-      ...folderPath.map((seg, i) => ({
-        label: seg.name,
-        onClick:
-          i < folderPath.length - 1
-            ? () => {
-                setSelectedPageId(null);
-                setSelectedFolderId(seg.id);
-              }
-            : () => {
-                setSelectedPageId(null);
-                setSelectedFolderId(seg.id);
-              },
-      })),
-      { label: page.title || 'Untitled' },
-    ];
-  }, [page, folders]);
-
-  const defaultFolderId = selectedFolderId ?? folders[0]?.id ?? '';
-  const currentSpaceFolders = useMemo(() => {
-    if (!selectedSpaceId) return [];
-    const space = folders.find((f) => f.id === selectedSpaceId);
-    return space ? [space] : [];
-  }, [folders, selectedSpaceId]);
 
   return (
     <div className="wiki-app">
       <HarbourAppBar homeUrl={shellUrl} appName="Notes" />
-
       {error && (
         <div className="wiki-banner wiki-banner--error" role="alert">
           <span>{error}</span>
-          <button type="button" className="wiki-btn wiki-btn--subtle" onClick={() => setError(null)}>
+          <button type="button" className="wiki-btn wiki-btn--subtle wiki-btn--small" onClick={() => setError(null)}>
             Dismiss
           </button>
         </div>
       )}
-
       <div className="wiki-body">
-        <WikiSidebar
-          spaces={folders}
-          selectedSpaceId={selectedSpaceId}
-          folders={currentSpaceFolders}
-          pagesByFolder={pagesByFolder}
-          selectedFolderId={selectedFolderId}
-          selectedPageId={selectedPageId}
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          onSelectSpace={(id) => {
-            setSelectedSpaceId(id);
-            setSelectedFolderId(id);
-            setSelectedPageId(null);
-          }}
-          onSelectFolder={setSelectedFolderId}
-          onSelectPage={(id, folderId) => void handleSelectPage(id, folderId)}
-          onReorderPages={handleReorderPages}
-          onCreateSpace={handleCreateSpace}
-          onCreateFolder={handleCreateFolder}
-          onCreatePage={handleCreatePage}
-          onRenameFolder={(id, name) =>
-            api.updateFolder(id, { name }).then(loadFolders).catch((e: Error) => setError(e.message))
-          }
+        <SpaceSidebar
+          spaces={spaces}
+          selectedSpace={selectedSpace}
+          tree={tree}
+          selectedPageId={pageId ?? null}
+          onSelectSpace={(id) => navigate(`/spaces/${id}`)}
+          onSelectPage={(pid) => spaceId && navigate(`/spaces/${spaceId}/pages/${pid}`)}
+          onCreateSpace={() => void handleCreateSpace()}
+          onCreatePage={(parentId) => void handleCreatePage(parentId)}
+          onShowOverview={() => spaceId && navigate(`/spaces/${spaceId}`)}
+          onShowHome={() => navigate('/spaces')}
+          isHome={!spaceId}
         />
-
-        <main className="wiki-main">
-          {page ? (
-            <article className="wiki-page">
-              <div className="wiki-page__inner">
-                <Breadcrumbs segments={breadcrumbSegments} />
-                <div className="wiki-page__header">
-                  <input
-                    className="wiki-page__title"
-                    value={page.title}
-                    placeholder="Page title"
-                    aria-label="Page title"
-                    onChange={(e) => {
-                      const title = e.target.value;
-                      setPage({ ...page, title });
-                      scheduleSave({ title });
-                    }}
-                  />
-                  <div className="wiki-page__meta">
-                    <span>
-                      Updated {new Date(page.updatedAt).toLocaleString(undefined, {
-                        dateStyle: 'medium',
-                        timeStyle: 'short',
-                      })}
-                    </span>
-                    <span className="wiki-page__meta-sep">·</span>
-                    <span>Version {page.version}</span>
-                    {saveStatus && (
-                      <>
-                        <span className="wiki-page__meta-sep">·</span>
-                        <span className="wiki-page__save">{saveStatus}</span>
-                      </>
-                    )}
-                  </div>
-                  <div className="wiki-page__actions">
-                    <button type="button" className="wiki-btn" onClick={() => api.exportMarkdown(page.id)}>
-                      Export Markdown
-                    </button>
-                    <button type="button" className="wiki-btn wiki-btn--danger" onClick={handleDeletePage}>
-                      Delete page
-                    </button>
-                  </div>
-                </div>
-                <RichTextEditor
-                  contentJson={page.contentJson || EMPTY_DOC_JSON}
-                  onChange={(contentJson) => {
-                    setPage({ ...page, contentJson });
-                    scheduleSave({ contentJson });
-                  }}
-                  onImageUpload={handleImageUpload}
-                />
-              </div>
-            </article>
-          ) : (
-            <div className="wiki-main__empty">
-              <h1>Welcome to Notes</h1>
-              <p>Select a page from the tree, or create one to start writing.</p>
-              {defaultFolderId && (
-                <button
-                  type="button"
-                  className="wiki-btn wiki-btn--primary"
-                  onClick={() => handleCreatePage(defaultFolderId)}
-                >
-                  Create a page
-                </button>
-              )}
-            </div>
+        <div className="wiki-workspace">
+          <div className="wiki-workspace__column">
+            {spaceId && pageId ? (
+              <PageView
+                spaceId={spaceId}
+                pageId={pageId}
+                space={selectedSpace}
+                tree={tree}
+                commentsOpen={commentsOpen}
+                onToggleComments={() => setCommentsOpen((open) => !open)}
+                onTreeChange={() => void refreshTree(spaceId)}
+              />
+            ) : selectedSpace ? (
+              <SpaceOverviewPage
+                space={selectedSpace}
+                tree={tree}
+                onSelectPage={(pid) => navigate(`/spaces/${spaceId}/pages/${pid}`)}
+                onCreatePage={() => void handleCreatePage(null)}
+              />
+            ) : (
+              <NotesHomePage
+                spaces={spaces}
+                onSelectSpace={(id) => navigate(`/spaces/${id}`)}
+                onCreateSpace={() => void handleCreateSpace()}
+              />
+            )}
+          </div>
+          {commentsOpen && spaceId && pageId && (
+            <CommentsPanel onClose={() => setCommentsOpen(false)} />
           )}
-        </main>
+        </div>
       </div>
     </div>
   );
 }
 
-function findSpaceIdForFolder(tree: FolderTreeNode[], folderId: string): string | null {
-  for (const space of tree) {
-    if (space.id === folderId) return space.id;
-    if (containsFolder(space.children, folderId)) return space.id;
-  }
-  return null;
+function PageView({
+  spaceId,
+  pageId,
+  space,
+  tree,
+  commentsOpen,
+  onToggleComments,
+  onTreeChange,
+}: {
+  spaceId: string;
+  pageId: string;
+  space: Space | null;
+  tree: readonly PageRef[];
+  commentsOpen: boolean;
+  onToggleComments: () => void;
+  onTreeChange: () => void;
+}) {
+  const navigate = useNavigate();
+  const [mode, setMode] = useState<'view' | 'edit'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('mode') === 'edit' ? 'edit' : 'view';
+  });
+  const [published, setPublished] = useState<PublishedPage | null>(null);
+  const [source, setSource] = useState<SourcePage | null>(null);
+  const [status, setStatus] = useState<PublishStatus | null>(null);
+  const [draftTitle, setDraftTitle] = useState('');
+  const [draftBody, setDraftBody] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
+  const [prUrl, setPrUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const pageRef = findPageInTree(tree, pageId);
+  const ancestors = getPageAncestors(tree, pageId);
+
+  const refreshStatus = useCallback(async () => {
+    const s = await api.getPublishStatus(spaceId);
+    setStatus(s);
+    setPrUrl(s.prUrl);
+  }, [spaceId]);
+
+  const loadPublished = useCallback(async () => {
+    const page = await api.getPublishedPage(spaceId, pageId);
+    setPublished(page);
+    setError(null);
+  }, [spaceId, pageId]);
+
+  const loadSource = useCallback(async () => {
+    const page = await api.getSourcePage(spaceId, pageId);
+    setSource(page);
+    setDraftTitle(page.title);
+    setDraftBody(page.contentMarkdown);
+    setError(null);
+  }, [spaceId, pageId]);
+
+  useEffect(() => {
+    void refreshStatus().catch(() => {});
+  }, [refreshStatus, source?.gitSha]);
+
+  useEffect(() => {
+    if (mode === 'view') {
+      void loadPublished().catch((e: Error) => {
+        setError(e.message);
+        setPublished(null);
+      });
+    } else {
+      void loadSource().catch((e: Error) => setError(e.message));
+    }
+  }, [mode, loadPublished, loadSource]);
+
+  const setModeAndUrl = (next: 'view' | 'edit') => {
+    setMode(next);
+    const url = new URL(window.location.href);
+    if (next === 'edit') url.searchParams.set('mode', 'edit');
+    else url.searchParams.delete('mode');
+    window.history.replaceState({}, '', url.pathname + url.search);
+  };
+
+  const save = async () => {
+    if (!source) return;
+    setSaving(true);
+    setSaveMessage('');
+    try {
+      const updated = await api.commitPage(spaceId, pageId, {
+        baseSha: source.gitSha,
+        title: draftTitle,
+        contentMarkdown: draftBody,
+      });
+      setSource(updated);
+      setSaveMessage('Saved & published');
+      setPrUrl(updated.prUrl);
+      await refreshStatus();
+      onTreeChange();
+      void loadPublished().catch(() => {});
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Save failed';
+      setError(message);
+      if (message.includes('base revision mismatch')) {
+        void loadSource().catch(() => {});
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const publishLabel = status
+    ? status.isPublished
+      ? status.publishedAt
+        ? `Published ${formatRelativeTime(status.publishedAt)}`
+        : 'Published'
+      : 'Publishing…'
+    : '';
+
+  const breadcrumbSegments = [
+    ...(space
+      ? [{ label: space.title, onClick: () => navigate(`/spaces/${spaceId}`) }]
+      : []),
+    ...ancestors.map((node) => ({
+      label: node.title,
+      onClick: () => navigate(`/spaces/${spaceId}/pages/${node.pageId}`),
+    })),
+    { label: pageRef?.title ?? pageId },
+  ];
+
+  const handleImageUpload = async (_file: File) => {
+    const url = window.prompt('Image URL (asset path or https://…)');
+    return url?.trim() ?? '';
+  };
+
+  return (
+    <>
+      <PageToolbar
+        mode={mode}
+        publishLabel={publishLabel}
+        prUrl={prUrl}
+        commentsOpen={commentsOpen}
+        canEdit
+        saving={saving}
+        onModeChange={setModeAndUrl}
+        onSave={() => void save()}
+        onToggleComments={onToggleComments}
+      />
+      <main className="wiki-main">
+        <article className="wiki-page">
+          <div className="wiki-page__inner">
+            <Breadcrumbs segments={breadcrumbSegments} />
+            {mode === 'edit' ? (
+              <input
+                className="wiki-page__title"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                placeholder="Untitled"
+                aria-label="Page title"
+              />
+            ) : (
+              <h1 className="wiki-page__title-static">
+                {published?.title ?? pageRef?.title ?? pageId}
+              </h1>
+            )}
+            {(saveMessage || error) && (
+              <div className="wiki-page__meta">
+                {saveMessage && <span className="wiki-page__save">{saveMessage}</span>}
+                {error && <span className="wiki-page__error">{error}</span>}
+              </div>
+            )}
+            {mode === 'view' ? (
+              published ? (
+                <div
+                  className="wiki-page__content wiki-page__content--html"
+                  dangerouslySetInnerHTML={{ __html: published.body }}
+                />
+              ) : (
+                <p className="wiki-main__empty-text">
+                  Not published yet. Switch to Edit and save to publish this page.
+                </p>
+              )
+            ) : (
+              source && (
+                <RichTextEditor
+                  contentMarkdown={draftBody}
+                  onMarkdownChange={setDraftBody}
+                  onImageUpload={handleImageUpload}
+                  editable
+                />
+              )
+            )}
+          </div>
+        </article>
+      </main>
+    </>
+  );
 }
 
-function containsFolder(nodes: FolderTreeNode[], folderId: string): boolean {
-  for (const node of nodes) {
-    if (node.id === folderId) return true;
-    if (containsFolder(node.children, folderId)) return true;
-  }
-  return false;
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const minutes = Math.floor(diff / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+export function App() {
+  return (
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '') || '/'}>
+      <Routes>
+        <Route path="/" element={<Navigate to="/spaces" replace />} />
+        <Route path="/spaces" element={<NotesShell />} />
+        <Route path="/spaces/:spaceId" element={<NotesShell />} />
+        <Route path="/spaces/:spaceId/pages/:pageId" element={<NotesShell />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }

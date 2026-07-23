@@ -23,6 +23,13 @@ export function handleError(err: unknown, c: Context): Response {
   if (err instanceof ForbiddenError) {
     return c.json({ error: err.message }, 403);
   }
-  console.error(JSON.stringify({ level: 'error', message: 'Unhandled error', err: String(err) }));
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      message: 'Unhandled error',
+      err: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    }),
+  );
   return c.json({ error: 'Internal server error' }, 500);
 }

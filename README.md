@@ -1,17 +1,24 @@
 # Harbour Notes
 
-Personal wiki satellite for the [Harbour](https://github.com/your-org/harbour) platform — nested folders, TipTap rich-text pages, image uploads, in-folder search, and markdown export.
+Confluence-style **Spaces** for the [Harbour](https://github.com/your-org/harbour) platform — GitHub-backed content monorepo, auto-publish on save, PR sync on every save.
 
 ## Architecture
 
-Hexagonal TypeScript: Hono API + React/Vite UI. Identity comes from Traefik ForwardAuth (`X-Harbour-*` headers); no login UI in this service.
+Hexagonal TypeScript: Hono API + React/Vite UI. Identity from Traefik ForwardAuth (`X-Harbour-*` headers).
 
-See [AGENTS.md](./AGENTS.md) and [docs/design/](./docs/design/).
+See [docs/design/notes-vcs-spaces-architecture.md](./docs/design/notes-vcs-spaces-architecture.md) and [AGENTS.md](./AGENTS.md).
 
 ## Prerequisites
 
-- Node.js 22+
-- For full stack: [harbour-infra](../harbour-infra) with Portcullis + Traefik
+Create a GitHub repository for wiki content and set:
+
+```bash
+NOTES_GITHUB_REPO=your-org/harbour-notes-content
+NOTES_GITHUB_TOKEN=ghp_...   # repo contents + pull requests
+NOTES_GITHUB_BASE_BRANCH=main
+```
+
+The API clones that repo into `NOTES_CONTENT_REPO_PATH` on startup. Every save commits locally, publishes read content, pushes a branch, and opens/updates a PR.
 
 ## Local development
 
@@ -19,49 +26,49 @@ See [AGENTS.md](./AGENTS.md) and [docs/design/](./docs/design/).
 
 ```bash
 cp config/env.example .env.local
+# Edit .env.local — set NOTES_GITHUB_REPO and NOTES_GITHUB_TOKEN
+# Docker Compose uses harbour-infra/compose/.env (not this file) — keep both in sync
 export $(grep -v '^#' .env.local | xargs)
 export TRUST_GATEWAY_HEADERS=false
-export DEV_USER_ID=alice
-export DEV_USER_EMAIL=alice@example.com
+export DEV_USER_ID=dev-user
+export DEV_USER_EMAIL=dev@example.com
 npm install
 npm run dev:api
 ```
 
-**UI** (terminal 2):
+**Seed a demo space** (terminal 2, once):
+
+```bash
+npm run dev:fixtures
+```
+
+**UI**:
 
 ```bash
 npm run dev:web
 ```
 
-Open http://localhost:5174
+Open http://localhost:5174/spaces
 
-Or both: `npm run dev` (after `npm install`).
-
-## Container stack / harbour.local
-
-Built and orchestrated by [harbour-infra](../harbour-infra) (Podman by default; Docker: `./scripts/docker/up.sh`):
-
-```bash
-cd ../harbour-infra
-./scripts/up.sh
-```
-
-Sign in at https://harbour.local, then open Notes from the launcher or https://notes.harbour.local.
-
-## API (MVP)
+## API (Spaces)
 
 | Method | Path |
 |--------|------|
 | GET | `/health`, `/version` |
-| GET/POST/PATCH/DELETE | `/api/folders`, `/api/folders/:id` |
-| GET | `/api/folders/:id/pages?q=` |
-| GET/POST/PUT/DELETE | `/api/pages`, `/api/pages/:id` |
-| POST | `/api/pages/:id/attachments` |
-| GET | `/api/attachments/:id/content` |
-| GET | `/api/pages/:id/export/markdown` |
+| GET/POST | `/api/spaces` |
+| GET | `/api/spaces/:spaceId/tree` |
+| GET | `/api/spaces/:spaceId/pages/:pageId/published` |
+| GET/PUT | `/api/spaces/:spaceId/pages/:pageId/source` |
+| POST | `/api/spaces/:spaceId/pages` |
+| GET | `/api/spaces/:spaceId/publish/status` |
+| GET | `/api/spaces/:spaceId/git/pr` |
+| POST | `/api/spaces/:spaceId/publish/callback` |
 
-## Related repos
+## MinIO (optional)
 
-- **harbour-platform-ui** — launcher shell
-- **portcullis** — SSO and ForwardAuth
-- **harbour-infra** — Compose stack
+```bash
+cd ../harbour-infra
+docker compose -f compose/docker-compose.yml -f compose/docker-compose.notes-dev.yml up -d minio minio-init
+```
+
+Set `NOTES_USE_S3_PUBLISH=true` and `NOTES_S3_ENDPOINT=http://localhost:9000` on the API.

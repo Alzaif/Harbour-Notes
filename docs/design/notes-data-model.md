@@ -1,33 +1,19 @@
 # Notes data model
 
-**Scope:** `harbour-notes` — entities, folder tree rules, delete semantics.
+**Status:** Superseded by VCS + Spaces architecture for page content.
 
-## Entities
+See [notes-vcs-spaces-architecture.md](./notes-vcs-spaces-architecture.md).
 
-| Entity | Key fields | Notes |
-|--------|------------|-------|
-| `User` | `id`, `email`, `displayName` | Upserted from `X-Harbour-*` gateway headers on each request |
-| `Folder` | `parentId`, `name`, `position`, `ownerUserId` | Tree via nullable `parentId` |
-| `Page` | `folderId`, `title`, `contentJson`, `contentPlain`, `version`, `visibility` | TipTap JSON + denormalized plain text for search |
-| `Attachment` | `pageId`, `storageKey`, `mimeType` | Image files on disk under `DATA_DIR/attachments/` |
+## Registry (SQLite)
 
-## Folder tree
+| Table | Purpose |
+|-------|---------|
+| `users` | Gateway identity upsert |
+| `spaces` | Space registry (slug, `content_path`, S3 prefix) |
+| `space_members` | ACL: viewer / editor / admin |
+| `publish_revisions` | Last in-process publish SHA per space |
+| `space_pull_requests` | Latest GitHub PR URL per space + user |
 
-- Roots: `parentId = null`, ordered by `position` then `name`.
-- **Move:** cannot set `parentId` to self or any descendant (cycle prevention).
-- **Delete:** allowed only when the folder has **no child folders** and **no pages**.
+## Deprecated (removed)
 
-## Pages
-
-- **Create:** default title `Untitled`, empty TipTap doc (`paragraph`).
-- **Update:** optimistic concurrency via `version`; mismatch returns **409 Conflict**.
-- **Delete:** removes page row and attachment files.
-
-## Authorization (MVP)
-
-All reads and writes filter by `ownerUserId = currentUser.id` from gateway identity.
-
-## Future schema (unused in MVP)
-
-- `page_permissions(page_id, grantee_type, grantee_id, role)` — sharing ACLs.
-- `pages.visibility` — `private` | `workspace` | `platform` (default `private`).
+The previous folder/page/attachment SQLite wiki model has been replaced. Page bodies live in Git; published snapshots live on S3.

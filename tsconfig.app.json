@@ -19,5 +19,10 @@
     },
     "types": ["vite/client"]
   },
-  "include": ["src/presentation", "src/shared/extract-plain-text.ts"]
+  "include": [
+    "src/presentation",
+    "src/shared/extract-plain-text.ts",
+    "src/shared/markdown-to-tiptap.ts",
+    "src/shared/tiptap-to-markdown.ts"
+  ]
 }
